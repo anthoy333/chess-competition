@@ -170,6 +170,7 @@ if(EMSCRIPTEN)
             -sASYNCIFY
             -sASYNCIFY_STACK_SIZE=65536
             -sALLOW_MEMORY_GROWTH=1
+            --shell-file ${CMAKE_SOURCE_DIR}/chess-gui/shell.html
         )
     endif()
 
@@ -184,6 +185,7 @@ if(EMSCRIPTEN)
     target_link_options(chesswasm PRIVATE
         -lembind
         -sMODULARIZE=1
+        -sEXPORT_ES6=1
         -sEXPORT_NAME=ChessBot
         -sALLOW_MEMORY_GROWTH=1
         -sENVIRONMENT=web,worker
