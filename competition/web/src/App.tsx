@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import type { BotInfo, GameState } from './lib/types';
+import type { BotInfo, PlayerInfo, GameState } from './lib/types';
 import { GameEngine } from './lib/game-engine';
 import { BotSelector } from './components/BotSelector';
 import { GameBoard } from './components/GameBoard';
@@ -15,19 +15,21 @@ const initialGameState: GameState = {
   fen: INITIAL_FEN,
   moves: [],
   currentTurn: 'w',
-  whiteBot: null,
-  blackBot: null,
+  whitePlayer: null,
+  blackPlayer: null,
   lastMoveTimeMs: 0,
+  timeLimitMs: 10000,
 };
 
 function App() {
   const [bots, setBots] = useState<BotInfo[]>([]);
-  const [whiteBot, setWhiteBot] = useState<BotInfo | null>(null);
-  const [blackBot, setBlackBot] = useState<BotInfo | null>(null);
+  const [whitePlayer, setWhitePlayer] = useState<PlayerInfo | null>(null);
+  const [blackPlayer, setBlackPlayer] = useState<PlayerInfo | null>(null);
   const [gameState, setGameState] = useState<GameState>(initialGameState);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [moveDelay, setMoveDelay] = useState(500);
+  const [timeLimitMs, setTimeLimitMs] = useState(10000);
   const engineRef = useRef<GameEngine | null>(null);
 
   // Fetch manifest on mount
@@ -60,12 +62,17 @@ function App() {
     engineRef.current?.setMoveDelay(moveDelay);
   }, [moveDelay]);
 
+  // Update time limit in engine
+  useEffect(() => {
+    engineRef.current?.setTimeLimit(timeLimitMs);
+  }, [timeLimitMs]);
+
   const handleStart = async () => {
-    if (!whiteBot || !blackBot || !engineRef.current) return;
+    if (!whitePlayer || !blackPlayer || !engineRef.current) return;
     setError(null);
     setLoading(true);
     try {
-      await engineRef.current.loadBots(whiteBot, blackBot);
+      await engineRef.current.loadPlayers(whitePlayer, blackPlayer);
       setLoading(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -90,32 +97,50 @@ function App() {
     engineRef.current?.reset();
   };
 
+  const handleHumanMove = useCallback(
+    (from: string, to: string, promotion?: string): boolean => {
+      if (!engineRef.current) return false;
+      return engineRef.current.submitHumanMove(from, to, promotion);
+    },
+    [],
+  );
+
   const gameActive = gameState.status !== 'idle' || loading;
+
+  // Determine board orientation: if a human is playing black (and white is a bot), flip the board
+  const boardOrientation: 'white' | 'black' =
+    whitePlayer?.type === 'bot' && blackPlayer?.type === 'human' ? 'black' : 'white';
 
   return (
     <div className="app">
       <header className="app-header">
-        <h1>♟ Chess Competition</h1>
-        <p>Select two bots and watch them battle it out!</p>
+        <h1>&#9823; Chess Competition</h1>
+        <p>Select two bots, or play against a bot yourself!</p>
       </header>
 
       {error && <div className="error-banner">{error}</div>}
 
       <BotSelector
         bots={bots}
-        whiteBot={whiteBot}
-        blackBot={blackBot}
-        onWhiteChange={setWhiteBot}
-        onBlackChange={setBlackBot}
+        whitePlayer={whitePlayer}
+        blackPlayer={blackPlayer}
+        onWhiteChange={setWhitePlayer}
+        onBlackChange={setBlackPlayer}
         onStart={handleStart}
         disabled={gameActive}
         loading={loading}
+        timeLimitMs={timeLimitMs}
+        onTimeLimitChange={setTimeLimitMs}
       />
 
-      {(gameState.whiteBot || loading) && (
+      {(gameState.whitePlayer || loading) && (
         <div className="game-layout">
           <div className="game-left">
-            <GameBoard gameState={gameState} />
+            <GameBoard
+              gameState={gameState}
+              onHumanMove={handleHumanMove}
+              boardOrientation={boardOrientation}
+            />
           </div>
           <div className="game-right">
             <GameControls

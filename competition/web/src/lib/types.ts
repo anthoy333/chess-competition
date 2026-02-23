@@ -4,8 +4,21 @@ export interface BotInfo {
   forkUrl: string;
 }
 
+export type PlayerType = 'bot' | 'human';
+
+export interface PlayerInfo {
+  type: PlayerType;
+  bot: BotInfo | null; // null when type === 'human'
+}
+
+export const HUMAN_PLAYER: PlayerInfo = {
+  type: 'human',
+  bot: null,
+};
+
 export type GameStatus =
   | 'idle'
+  | 'waiting-human' // waiting for a human move
   | 'running'
   | 'paused'
   | 'finished';
@@ -38,9 +51,10 @@ export interface GameState {
   fen: string;
   moves: MoveRecord[];
   currentTurn: 'w' | 'b';
-  whiteBot: BotInfo | null;
-  blackBot: BotInfo | null;
+  whitePlayer: PlayerInfo | null;
+  blackPlayer: PlayerInfo | null;
   lastMoveTimeMs: number;
+  timeLimitMs: number;
 }
 
 // Messages from main thread -> worker

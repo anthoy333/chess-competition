@@ -293,6 +293,99 @@ body {
 .status-running { color: var(--success); }
 .status-paused { color: var(--warning); }
 .status-finished { color: var(--accent); }
+.status-waiting-human { color: var(--success); }
+
+.your-turn-indicator {
+  font-size: 0.8em;
+  color: var(--success);
+  font-weight: 600;
+  animation: pulse 1s infinite;
+}
+
+.human-icon {
+  font-size: 1.6em;
+  line-height: 1;
+}
+
+.human-icon-sm {
+  font-size: 1.2em;
+  line-height: 1;
+}
+
+/* Time limit selector */
+.time-limit-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.time-limit-label {
+  font-size: 0.9em;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.time-preset-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.time-preset-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.85em;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.time-preset-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.time-preset-btn.active {
+  background: var(--accent);
+  color: #000;
+  border-color: var(--accent);
+}
+
+.time-preset-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.time-custom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.time-input {
+  width: 80px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.85em;
+  text-align: right;
+}
+
+.time-input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.time-unit {
+  font-size: 0.85em;
+  color: var(--text-secondary);
+}
 
 .game-result {
   margin-top: 12px;

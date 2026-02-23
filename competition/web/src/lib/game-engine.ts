@@ -1,6 +1,7 @@
 import { Chess } from 'chess.js';
 import type {
   BotInfo,
+  PlayerInfo,
   GameState,
   GameResult,
   MoveRecord,
@@ -25,6 +26,9 @@ export class GameEngine {
   private abortController: AbortController | null = null;
   private stepping = false;
 
+  // Human move support
+  private humanMoveResolve: ((uci: string) => void) | null = null;
+
   constructor(onStateChange: (state: GameState) => void) {
     this.chess = new Chess();
     this.moveDelayMs = DEFAULT_MOVE_DELAY_MS;
@@ -43,9 +47,10 @@ export class GameEngine {
       fen: this.chess.fen(),
       moves: [...(this.state?.moves ?? [])],
       currentTurn: this.chess.turn(),
-      whiteBot: this.state?.whiteBot ?? null,
-      blackBot: this.state?.blackBot ?? null,
+      whitePlayer: this.state?.whitePlayer ?? null,
+      blackPlayer: this.state?.blackPlayer ?? null,
       lastMoveTimeMs: this.state?.lastMoveTimeMs ?? 0,
+      timeLimitMs: this.timeLimitMs,
     };
   }
 
@@ -66,7 +71,17 @@ export class GameEngine {
     this.timeLimitMs = ms;
   }
 
-  async loadBots(whiteBot: BotInfo, blackBot: BotInfo): Promise<void> {
+  getTimeLimit(): number {
+    return this.timeLimitMs;
+  }
+
+  private isHumanTurn(): boolean {
+    const turn = this.chess.turn();
+    const player = turn === 'w' ? this.state.whitePlayer : this.state.blackPlayer;
+    return player?.type === 'human';
+  }
+
+  async loadPlayers(whitePlayer: PlayerInfo, blackPlayer: PlayerInfo): Promise<void> {
     this.cleanup();
     this.chess = new Chess();
     this.state = {
@@ -75,40 +90,48 @@ export class GameEngine {
       fen: INITIAL_FEN,
       moves: [],
       currentTurn: 'w',
-      whiteBot,
-      blackBot,
+      whitePlayer,
+      blackPlayer,
       lastMoveTimeMs: 0,
+      timeLimitMs: this.timeLimitMs,
     };
 
     const base = import.meta.env.BASE_URL;
+    const loadPromises: Promise<void>[] = [];
 
-    // Create workers
-    this.whiteWorker = new Worker(
-      new URL('../workers/bot-worker.ts', import.meta.url),
-      { type: 'module' },
-    );
-    this.blackWorker = new Worker(
-      new URL('../workers/bot-worker.ts', import.meta.url),
-      { type: 'module' },
-    );
+    // Create worker for white bot
+    if (whitePlayer.type === 'bot' && whitePlayer.bot) {
+      this.whiteWorker = new Worker(
+        new URL('../workers/bot-worker.ts', import.meta.url),
+        { type: 'module' },
+      );
+      const whiteReady = this.waitForReady(this.whiteWorker, 'white');
+      const whiteMsg: WorkerInMessage = {
+        type: 'load',
+        botUrl: `${base}bots/${whitePlayer.bot.username}.js`,
+      };
+      this.whiteWorker.postMessage(whiteMsg);
+      loadPromises.push(whiteReady);
+    }
 
-    // Load bots into workers
-    const whiteReady = this.waitForReady(this.whiteWorker, 'white');
-    const blackReady = this.waitForReady(this.blackWorker, 'black');
+    // Create worker for black bot
+    if (blackPlayer.type === 'bot' && blackPlayer.bot) {
+      this.blackWorker = new Worker(
+        new URL('../workers/bot-worker.ts', import.meta.url),
+        { type: 'module' },
+      );
+      const blackReady = this.waitForReady(this.blackWorker, 'black');
+      const blackMsg: WorkerInMessage = {
+        type: 'load',
+        botUrl: `${base}bots/${blackPlayer.bot.username}.js`,
+      };
+      this.blackWorker.postMessage(blackMsg);
+      loadPromises.push(blackReady);
+    }
 
-    const whiteMsg: WorkerInMessage = {
-      type: 'load',
-      botUrl: `${base}bots/${whiteBot.username}.js`,
-    };
-    const blackMsg: WorkerInMessage = {
-      type: 'load',
-      botUrl: `${base}bots/${blackBot.username}.js`,
-    };
-
-    this.whiteWorker.postMessage(whiteMsg);
-    this.blackWorker.postMessage(blackMsg);
-
-    await Promise.all([whiteReady, blackReady]);
+    if (loadPromises.length > 0) {
+      await Promise.all(loadPromises);
+    }
     this.emit('idle', null);
   }
 
@@ -141,7 +164,13 @@ export class GameEngine {
     if (this.state.status === 'running') return;
 
     this.abortController = new AbortController();
-    this.emit('running', null);
+
+    // If it's a human's turn, go to waiting-human instead of running
+    if (this.isHumanTurn()) {
+      this.emit('waiting-human', null);
+    } else {
+      this.emit('running', null);
+    }
 
     try {
       await this.gameLoop(this.abortController.signal);
@@ -151,23 +180,73 @@ export class GameEngine {
   }
 
   pause(): void {
-    if (this.state.status !== 'running') return;
+    if (this.state.status !== 'running' && this.state.status !== 'waiting-human') return;
     this.abortController?.abort();
     this.abortController = null;
+    // If waiting for human, clear the pending promise
+    if (this.humanMoveResolve) {
+      this.humanMoveResolve = null;
+    }
     this.emit('paused', null);
   }
 
   async step(): Promise<void> {
     if (this.state.status === 'finished') return;
     if (this.state.status === 'running') return;
+
+    // For human turns, enter waiting-human mode so the board becomes interactive
+    if (this.isHumanTurn()) {
+      this.abortController = new AbortController();
+      this.emit('waiting-human', null);
+      try {
+        await this.executeSingleMove();
+      } catch {
+        // aborted
+      }
+      return;
+    }
+
     this.stepping = true;
     await this.executeSingleMove();
     this.stepping = false;
   }
 
+  /** Called by the UI when a human makes a move on the board */
+  submitHumanMove(from: string, to: string, promotion?: string): boolean {
+    // Validate the move
+    const uci = from + to + (promotion ?? '');
+    try {
+      const result = this.chess.move({ from, to, promotion });
+      if (!result) return false;
+
+      // Record the move
+      const moveRecord: MoveRecord = {
+        moveNumber: Math.ceil(this.state.moves.length / 2) + 1,
+        san: result.san,
+        uci,
+        fen: this.chess.fen(),
+        color: result.color as 'w' | 'b',
+        timeMs: 0,
+      };
+      this.state.moves.push(moveRecord);
+      this.state.lastMoveTimeMs = 0;
+
+      // Resolve the pending human move promise
+      if (this.humanMoveResolve) {
+        this.humanMoveResolve(uci);
+        this.humanMoveResolve = null;
+      }
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   reset(): void {
     this.abortController?.abort();
     this.abortController = null;
+    this.humanMoveResolve = null;
     this.chess = new Chess();
     this.state = {
       ...this.state,
@@ -186,9 +265,10 @@ export class GameEngine {
       await this.executeSingleMove();
 
       if (this.state.status === 'finished') return;
+      if (signal.aborted) return;
 
-      // Inter-move delay for visualization
-      if (!signal.aborted && this.moveDelayMs > 0) {
+      // Inter-move delay for visualization (only between bot moves)
+      if (!signal.aborted && this.moveDelayMs > 0 && !this.isHumanTurn()) {
         await this.delay(this.moveDelayMs, signal);
       }
     }
@@ -200,12 +280,61 @@ export class GameEngine {
 
   private async executeSingleMove(): Promise<void> {
     const turn = this.chess.turn();
+    const player = turn === 'w' ? this.state.whitePlayer : this.state.blackPlayer;
+
+    if (!player) {
+      this.emit('finished', turn === 'w' ? 'white-forfeit-invalid' : 'black-forfeit-invalid');
+      return;
+    }
+
+    if (player.type === 'human') {
+      await this.executeHumanMove();
+    } else {
+      await this.executeBotMove(turn);
+    }
+  }
+
+  private async executeHumanMove(): Promise<void> {
+    this.emit('waiting-human', null);
+
+    // Wait for the human to make a move via submitHumanMove()
+    await new Promise<string>((resolve, reject) => {
+      this.humanMoveResolve = resolve;
+
+      // Listen for abort
+      const signal = this.abortController?.signal;
+      if (signal) {
+        const onAbort = () => {
+          this.humanMoveResolve = null;
+          reject(new Error('aborted'));
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+    });
+
+    // The move was already applied in submitHumanMove, so just check game over
+    if (this.chess.isGameOver()) {
+      this.finishGame();
+    } else if (!this.stepping) {
+      if (this.isHumanTurn()) {
+        this.emit('waiting-human', null);
+      } else {
+        this.emit('running', null);
+      }
+    } else {
+      this.emit('paused', null);
+    }
+  }
+
+  private async executeBotMove(turn: 'w' | 'b'): Promise<void> {
     const worker = turn === 'w' ? this.whiteWorker : this.blackWorker;
 
     if (!worker) {
       this.emit('finished', turn === 'w' ? 'white-forfeit-invalid' : 'black-forfeit-invalid');
       return;
     }
+
+    this.emit('running', null);
 
     const fen = this.chess.fen();
     const startTime = performance.now();
@@ -227,7 +356,6 @@ export class GameEngine {
 
     // Validate and apply the move
     try {
-      // Convert UCI to move object
       const from = uci.substring(0, 2);
       const to = uci.substring(2, 4);
       const promotion = uci.length > 4 ? uci[4] : undefined;
@@ -254,7 +382,11 @@ export class GameEngine {
       if (this.chess.isGameOver()) {
         this.finishGame();
       } else if (!this.stepping) {
-        this.emit('running', null);
+        if (this.isHumanTurn()) {
+          this.emit('waiting-human', null);
+        } else {
+          this.emit('running', null);
+        }
       } else {
         this.emit('paused', null);
       }
@@ -296,7 +428,6 @@ export class GameEngine {
     let result: GameResult = null;
 
     if (this.chess.isCheckmate()) {
-      // The side whose turn it is has been checkmated
       result = this.chess.turn() === 'w' ? 'black-checkmate' : 'white-checkmate';
     } else if (this.chess.isStalemate()) {
       result = 'stalemate';
@@ -324,6 +455,7 @@ export class GameEngine {
   cleanup(): void {
     this.abortController?.abort();
     this.abortController = null;
+    this.humanMoveResolve = null;
     this.whiteWorker?.terminate();
     this.blackWorker?.terminate();
     this.whiteWorker = null;

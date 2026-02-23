@@ -36,18 +36,21 @@ export const GameControls: React.FC<GameControlsProps> = ({
   const isRunning = gameState.status === 'running';
   const isFinished = gameState.status === 'finished';
   const isIdle = gameState.status === 'idle';
+  const isWaitingHuman = gameState.status === 'waiting-human';
+
+  const statusLabel = isWaitingHuman ? 'YOUR TURN' : gameState.status.toUpperCase();
 
   return (
     <div className="game-controls">
       <div className="controls-buttons">
-        {!isRunning ? (
-          <button onClick={onPlay} disabled={isFinished || !gameState.whiteBot}>
+        {!isRunning && !isWaitingHuman ? (
+          <button onClick={onPlay} disabled={isFinished || !gameState.whitePlayer}>
             ▶ Play
           </button>
         ) : (
           <button onClick={onPause}>⏸ Pause</button>
         )}
-        <button onClick={onStep} disabled={isRunning || isFinished || !gameState.whiteBot}>
+        <button onClick={onStep} disabled={isRunning || isWaitingHuman || isFinished || !gameState.whitePlayer}>
           ⏭ Step
         </button>
         <button onClick={onReset} disabled={isIdle}>
@@ -72,8 +75,8 @@ export const GameControls: React.FC<GameControlsProps> = ({
       <div className="controls-status">
         <div className="status-row">
           <span className="status-label">Status:</span>
-          <span className={`status-value status-${gameState.status}`}>
-            {gameState.status.toUpperCase()}
+          <span className={`status-value status-${isWaitingHuman ? 'waiting-human' : gameState.status}`}>
+            {statusLabel}
           </span>
         </div>
         <div className="status-row">
@@ -83,6 +86,10 @@ export const GameControls: React.FC<GameControlsProps> = ({
         <div className="status-row">
           <span className="status-label">Moves:</span>
           <span>{gameState.moves.length}</span>
+        </div>
+        <div className="status-row">
+          <span className="status-label">Time limit:</span>
+          <span>{(gameState.timeLimitMs / 1000).toFixed(1)}s</span>
         </div>
         {gameState.lastMoveTimeMs > 0 && (
           <div className="status-row">
