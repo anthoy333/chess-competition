@@ -1,10 +1,10 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Base path: override with --base flag in CLI, or defaults to /competition/
+// Base path for GitHub Pages: /<repo-name>/competition/
 export default defineConfig({
   plugins: [react()],
-  base: '/competition/',
+  base: '/chess-competition/competition/',
   server: {
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',

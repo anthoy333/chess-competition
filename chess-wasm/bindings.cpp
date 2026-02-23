@@ -1,20 +1,22 @@
 #include <emscripten/bind.h>
 #include "chess-simulator.h"
 #include <string>
-#include <type_traits>
 
-// SFINAE: detect if ChessSimulator::Move accepts (string, int) — new signature
-template <typename = void>
+// SFINAE: T must be a dependent template parameter so that
+// invalid expressions are a substitution failure, not a hard error.
+
+// Preferred overload (int): two-arg Move(fen, timeLimitMs) — new signature
+template <typename T = ChessSimulator>
 auto call_move(const std::string& fen, int timeLimitMs, int)
-    -> decltype(ChessSimulator::Move(fen, timeLimitMs)) {
-    return ChessSimulator::Move(fen, timeLimitMs);
+    -> decltype(T::Move(fen, timeLimitMs)) {
+    return T::Move(fen, timeLimitMs);
 }
 
-// Fallback: old signature Move(string) — ignores timeLimitMs
-template <typename = void>
+// Fallback overload (long): one-arg Move(fen) — old forks without timeLimitMs
+template <typename T = ChessSimulator>
 auto call_move(const std::string& fen, int /*timeLimitMs*/, long)
-    -> decltype(ChessSimulator::Move(fen)) {
-    return ChessSimulator::Move(fen);
+    -> decltype(T::Move(fen)) {
+    return T::Move(fen);
 }
 
 std::string safe_move(const std::string& fen, int timeLimitMs) {
