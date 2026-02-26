@@ -1,4 +1,3 @@
-
 #define SDL_MAIN_HANDLED true
 #include <algorithm>
 #include <iostream>
@@ -6,6 +5,8 @@
 #define NANOSVG_IMPLEMENTATION
 #include "nanosvg.h"
 #define NANOSVGRAST_IMPLEMENTATION
+#include <fstream>
+
 #include "nanosvgrast.h"
 
 #include "SDL_surface.h"
@@ -31,7 +32,9 @@ EM_JS(int, canvas_get_height, (), { return canvas.height; });
 #include "magic_enum/magic_enum.hpp"
 #include <chrono>
 #include <map>
-
+#include <sstream>
+#include <vector>
+#include <string>
 enum class SimulationState {
   PAUSED,
   RUNNING,
@@ -42,15 +45,16 @@ auto simulationState = SimulationState::PAUSED;
 std::chrono::nanoseconds timeSpentOnMoves = std::chrono::nanoseconds::zero();
 std::chrono::nanoseconds timeSpentLastMove = std::chrono::milliseconds::zero();
 string gameResult;
-vector<string> moves;
-
+std::vector<std::string> movesDisplay;
+std::vector<std::string> movesUCI;
 void reset(chess::Board &board) {
   board = chess::Board();
   simulationState = SimulationState::PAUSED;
   timeSpentOnMoves = std::chrono::nanoseconds::zero();
   timeSpentLastMove = std::chrono::milliseconds::zero();
   gameResult = "";
-  moves.clear();
+  movesDisplay.clear();
+  movesUCI.clear();
 }
 
 void move(chess::Board &board) {
@@ -87,8 +91,11 @@ void move(chess::Board &board) {
   // update stats
   timeSpentOnMoves += afterTime - beforeTime;
   timeSpentLastMove = afterTime - beforeTime;
-  moves.push_back(std::to_string(board.fullMoveNumber()) + " " + turn + ": " +
-                  moveStr);
+  movesDisplay.push_back(
+      std::to_string(board.fullMoveNumber()) + " " + turn + ": " + moveStr
+  );
+
+  movesUCI.push_back(moveStr);
 }
 
 struct Texture {
@@ -101,17 +108,64 @@ struct Texture {
       SDL_FreeSurface(surface);
   }
 };
+std::string GeneratePGN(const std::vector<std::string>& uciMoves,
+                        const std::string& result)
+{
+  chess::Board board;
+  std::ostringstream pgn;
 
+  // PGN headers
+  pgn << "[Event \"Self Play\"]\n";
+  pgn << "[Site \"Local\"]\n";
+  pgn << "[Result \"" << result << "\"]\n\n";
+
+  int moveNumber = 1;
+
+  for (size_t i = 0; i < uciMoves.size(); i++)
+  {
+    chess::Move move = chess::uci::uciToMove(board, uciMoves[i]);
+
+    if (board.sideToMove() == chess::Color::WHITE)
+    {
+      pgn << moveNumber << ". ";
+    }
+
+    std::string san = chess::uci::moveToSan(board, move);
+    pgn << san << " ";
+
+    board.makeMove(move);
+
+    if (board.sideToMove() == chess::Color::WHITE)
+      moveNumber++;
+  }
+
+  pgn << result;
+
+  return pgn.str();
+}
+std::string ConvertResultToPGN(const std::string& raw)
+{
+  if (raw.find("WHITE") != std::string::npos)
+    return "1-0";
+
+  if (raw.find("BLACK") != std::string::npos)
+    return "0-1";
+
+  if (raw.find("DRAW") != std::string::npos)
+    return "1/2-1/2";
+
+  return ""; // game still in progress
+}
 Texture *SvgStringToTexture(std::string svgString, SDL_Renderer *renderer, int size = 64) {
   Texture *tex = new Texture();
-  
+
   // Parse SVG from string
   NSVGimage *image = nsvgParse(const_cast<char*>(svgString.c_str()), "px", 96.0f);
   if (!image) {
     std::cerr << "Failed to parse SVG" << std::endl;
     return tex;
   }
-  
+
   // Create rasterizer
   NSVGrasterizer *rast = nsvgCreateRasterizer();
   if (!rast) {
@@ -119,18 +173,18 @@ Texture *SvgStringToTexture(std::string svgString, SDL_Renderer *renderer, int s
     std::cerr << "Failed to create SVG rasterizer" << std::endl;
     return tex;
   }
-  
+
   // Calculate scale to fit in desired size
   float scale = size / std::max(image->width, image->height);
   int w = static_cast<int>(image->width * scale);
   int h = static_cast<int>(image->height * scale);
-  
+
   // Allocate pixel buffer (RGBA)
   unsigned char *pixels = new unsigned char[w * h * 4];
-  
+
   // Rasterize SVG to pixel buffer
   nsvgRasterize(rast, image, 0, 0, scale, pixels, w, h, w * 4);
-  
+
   // Create SDL surface from pixel buffer
   tex->surface = SDL_CreateRGBSurfaceFrom(
       pixels, w, h, 32, w * 4,
@@ -139,15 +193,15 @@ Texture *SvgStringToTexture(std::string svgString, SDL_Renderer *renderer, int s
       0x00FF0000,  // B mask
       0xFF000000   // A mask
   );
-  
+
   // Create texture from surface
   tex->texture = SDL_CreateTextureFromSurface(renderer, tex->surface);
-  
+
   // Cleanup
   nsvgDeleteRasterizer(rast);
   nsvgDelete(image);
   delete[] pixels;
-  
+
   // Note: We need to clear surface since we're freeing the pixel buffer
   // The texture has a copy of the data
   SDL_FreeSurface(tex->surface);
@@ -286,6 +340,14 @@ int main(int argc, char *argv[]) {
       simulationState = SimulationState::PAUSED;
       move(board);
     }
+    if (ImGui::Button("Export PGN"))    {
+      std::string resultPGN = ConvertResultToPGN(gameResult);
+      std::string pgn = GeneratePGN(movesUCI, resultPGN);
+      std::ofstream file("game.txt");
+      file << pgn;
+      file.close();
+      std::cout << "Saved PGN to: game.txt\n";
+    }
     ImGui::Separator();
     // statistics
     ImGui::Text("Acc Time spent: %.3fms", timeSpentOnMoves.count() / 1000000.0);
@@ -297,8 +359,7 @@ int main(int argc, char *argv[]) {
     ImGui::Separator();
     ImGui::BeginChild("Moves", ImVec2(0, 0), true);
     // print moves in reverse order
-    for (auto it = moves.rbegin(); it != moves.rend(); ++it)
-      ImGui::Text("%s", it->c_str());
+    for (auto it = movesDisplay.rbegin(); it != movesDisplay.rend(); ++it)      ImGui::Text("%s", it->c_str());
     ImGui::EndChild(); // end child moves
     ImGui::End();      // end settings
 
