@@ -17,8 +17,7 @@ static int timeLimitMsGlobal;
 
 bool outOfTime() {
     auto now = std::chrono::high_resolution_clock::now();
-    auto elapsed =
-        std::chrono::duration_cast<std::chrono::milliseconds>(now - searchStart).count();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - searchStart).count();
     return elapsed >= timeLimitMsGlobal;
 }
 
@@ -26,6 +25,7 @@ bool outOfTime() {
 enum NodeType { EXACT, LOWERBOUND, UPPERBOUND };
 
 struct TTEntry {
+    uint64_t hash;
     int depth;
     int score;
     NodeType type;
@@ -55,9 +55,11 @@ inline void storeTT(uint64_t hash, int depth, int score, NodeType type)
 inline void clearTT()
 {
     for (int i = 0; i < TT_SIZE; ++i)
+    {
         transTable[i].depth = -1;
+        transTable[i].hash  = 0;
+    }
 }
-
 static chess::Move killerMoves[128][2];
 static int historyHeuristic[2][64][64];
 
@@ -135,40 +137,34 @@ int evaluateMaterial(chess::Board& board)
     for (int i = 0; i < 64; ++i)
     {
         auto piece = board.at(chess::Square(i)).internal();
-        if (piece == chess::Piece::underlying::NONE)
+        if (piece == chess::Piece::underlying::NONE) {
             continue;
+        }
 
         int val = pieceValue(piece);
 
-        if (chess::Piece(piece).color() == chess::Color::WHITE)
+        if (chess::Piece(piece).color() == chess::Color::WHITE) {
             score += val;
-        else
+        }
+        else {
             score -= val;
+        }
     }
 
     return score;
 }
 int evaluateMobility(chess::Board& board)
 {
-    chess::Movelist whiteMoves;
-    chess::movegen::legalmoves(whiteMoves, board);
-
-    int whiteMob = (board.sideToMove() == chess::Color::WHITE)
-                   ? whiteMoves.size()
-                   : 0;
+    chess::Movelist moves;
+    chess::movegen::legalmoves(moves, board);
+    int sideMob = moves.size();
 
     board.makeNullMove();
-
-    chess::Movelist blackMoves;
-    chess::movegen::legalmoves(blackMoves, board);
-
-    int blackMob = (board.sideToMove() == chess::Color::BLACK)
-                   ? blackMoves.size()
-                   : 0;
-
+    chess::movegen::legalmoves(moves, board);
+    int oppMob = moves.size();
     board.unmakeNullMove();
 
-    return (whiteMob - blackMob) * 2;  // small weight
+    return (sideMob - oppMob) * 2;
 }
 int evaluateKingSafety(chess::Board& board)
 {
@@ -190,9 +186,9 @@ int evaluateKingSafety(chess::Board& board)
                 if (f >= 0 && f < 8 && r < 8)
                 {
                     int sq = r * 8 + f;
-                    if (board.at(chess::Square(sq)).internal() ==
-                        chess::Piece::underlying::WHITEPAWN)
+                    if (board.at(chess::Square(sq)).internal() == chess::Piece::underlying::WHITEPAWN) {
                         score += 15;
+                    }
                 }
             }
         }
@@ -210,9 +206,9 @@ int evaluateKingSafety(chess::Board& board)
                 if (f >= 0 && f < 8 && r >= 0)
                 {
                     int sq = r * 8 + f;
-                    if (board.at(chess::Square(sq)).internal() ==
-                        chess::Piece::underlying::BLACKPAWN)
+                    if (board.at(chess::Square(sq)).internal() == chess::Piece::underlying::BLACKPAWN) {
                         score -= 15;
+                    }
                 }
             }
         }
@@ -234,17 +230,21 @@ int evaluatePawnStructure(chess::Board& board)
             int sq = rank * 8 + file;
             auto piece = board.at(chess::Square(sq)).internal();
 
-            if (piece == chess::Piece::underlying::WHITEPAWN)
+            if (piece == chess::Piece::underlying::WHITEPAWN) {
                 whiteCount++;
-            if (piece == chess::Piece::underlying::BLACKPAWN)
+            }
+            if (piece == chess::Piece::underlying::BLACKPAWN) {
                 blackCount++;
+            }
         }
 
-        if (whiteCount > 1)
+        if (whiteCount > 1) {
             score -= 15 * (whiteCount - 1);
+        }
 
-        if (blackCount > 1)
+        if (blackCount > 1) {
             score += 15 * (blackCount - 1);
+        }
     }
 
     // Passed pawns
@@ -265,8 +265,7 @@ int evaluatePawnStructure(chess::Board& board)
                     if (f >= 0 && f < 8)
                     {
                         int sq = r * 8 + f;
-                        if (board.at(chess::Square(sq)).internal() ==
-                            chess::Piece::underlying::BLACKPAWN)
+                        if (board.at(chess::Square(sq)).internal() ==  chess::Piece::underlying::BLACKPAWN)
                         {
                             passed = false;
                             break;
@@ -275,8 +274,9 @@ int evaluatePawnStructure(chess::Board& board)
                 }
             }
 
-            if (passed)
+            if (passed) {
                 score += (rank * 10);
+            }
         }
 
         if (piece == chess::Piece::underlying::BLACKPAWN)
@@ -293,8 +293,7 @@ int evaluatePawnStructure(chess::Board& board)
                     if (f >= 0 && f < 8)
                     {
                         int sq = r * 8 + f;
-                        if (board.at(chess::Square(sq)).internal() ==
-                            chess::Piece::underlying::WHITEPAWN)
+                        if (board.at(chess::Square(sq)).internal() == chess::Piece::underlying::WHITEPAWN)
                         {
                             passed = false;
                             break;
@@ -303,8 +302,9 @@ int evaluatePawnStructure(chess::Board& board)
                 }
             }
 
-            if (passed)
+            if (passed) {
                 score -= ((7 - rank) * 10);
+            }
         }
     }
 
@@ -509,12 +509,14 @@ int alphaBeta(chess::Board& board, int depth, int alpha, int beta, int ply)
     uint64_t hash = board.hash();
     TTEntry* tt = probeTT(hash);
 
-    if (tt->depth >= depth)
+    if (tt->hash == hash && tt->depth >= depth)
     {
         if (tt->type == EXACT)
             return tt->score;
+
         else if (tt->type == LOWERBOUND)
             alpha = std::max(alpha, tt->score);
+
         else if (tt->type == UPPERBOUND)
             beta = std::min(beta, tt->score);
 
