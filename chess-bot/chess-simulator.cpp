@@ -10,7 +10,7 @@ using namespace ChessSimulator;
 
 static constexpr int INF = 1000000;
 static constexpr int MATE_SCORE = 100000;
-static constexpr int MAX_DEPTH = 5;
+static constexpr int MAX_DEPTH = 6;
 
 static std::chrono::high_resolution_clock::time_point searchStart;
 static int timeLimitMsGlobal;
@@ -32,7 +32,7 @@ struct TTEntry {
 };
 
 
-static constexpr int TT_SIZE = 1 << 22; // 4M entries (~64MB)
+static constexpr int TT_SIZE = 1 << 22;
 static TTEntry transTable[TT_SIZE];
 
 inline TTEntry* probeTT(uint64_t hash)
@@ -46,6 +46,7 @@ inline void storeTT(uint64_t hash, int depth, int score, NodeType type)
 
     if (entry->depth <= depth)
     {
+        entry->hash = hash;
         entry->depth = depth;
         entry->score = score;
         entry->type  = type;
@@ -155,13 +156,16 @@ int evaluateMaterial(chess::Board& board)
 }
 int evaluateMobility(chess::Board& board)
 {
-    chess::Movelist moves;
-    chess::movegen::legalmoves(moves, board);
-    int sideMob = moves.size();
+    chess::Movelist sideMoves;
+    chess::movegen::legalmoves(sideMoves, board);
+    int sideMob = sideMoves.size();
 
     board.makeNullMove();
-    chess::movegen::legalmoves(moves, board);
-    int oppMob = moves.size();
+
+    chess::Movelist oppMoves;
+    chess::movegen::legalmoves(oppMoves, board);
+    int oppMob = oppMoves.size();
+
     board.unmakeNullMove();
 
     return (sideMob - oppMob) * 2;
@@ -247,7 +251,6 @@ int evaluatePawnStructure(chess::Board& board)
         }
     }
 
-    // Passed pawns
     for (int i = 0; i < 64; i++)
     {
         auto piece = board.at(chess::Square(i)).internal();
@@ -375,7 +378,6 @@ int evaluateDevelopment(chess::Board& board)
 {
     int score = 0;
 
-    // Penalize undeveloped minor pieces
     if (board.at(chess::Square::SQ_B1).internal() == chess::Piece::underlying::WHITEKNIGHT)
         score -= 15;
     if (board.at(chess::Square::SQ_G1).internal() == chess::Piece::underlying::WHITEKNIGHT)
@@ -402,7 +404,7 @@ int evaluateCenterControl(chess::Board& board)
 {
     int score = 0;
 
-    int centerSquares[4] = { 27, 28, 35, 36 }; // d4, e4, d5, e5
+    int centerSquares[4] = { 27, 28, 35, 36 };
 
     for (int sq : centerSquares)
     {
@@ -545,7 +547,6 @@ int alphaBeta(chess::Board& board, int depth, int alpha, int beta, int ply)
         }
         else
         {
-            // PVS null window search
             score = -alphaBeta(board, depth - 1, -alpha - 1, -alpha, ply + 1);
 
             if (score > alpha && score < beta)
