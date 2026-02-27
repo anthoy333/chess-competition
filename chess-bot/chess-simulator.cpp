@@ -11,7 +11,7 @@ using namespace ChessSimulator;
 static constexpr int INF = 1000000;
 static constexpr int MATE_SCORE = 100000;
 static constexpr int MAX_DEPTH = 6;
-
+static uint64_t repetitionTable[1024];
 static std::chrono::high_resolution_clock::time_point searchStart;
 static int timeLimitMsGlobal;
 
@@ -494,9 +494,24 @@ int quiescence(chess::Board& board, int alpha, int beta) {
 
 int alphaBeta(chess::Board& board, int depth, int alpha, int beta, int ply)
 {
-    if (outOfTime())
+    if (outOfTime()) {
         return evaluate(board);
+    }
+    uint64_t hash = board.hash();
 
+    int repetitionCount = 0;
+
+    for (int i = 0; i < ply; ++i)
+    {
+        if (repetitionTable[i] == hash)
+        {
+            repetitionCount++;
+            if (repetitionCount >= 2)
+            {
+                return 0;
+            }
+        }
+    }
     if (depth == 0)
         return quiescence(board, alpha, beta);
 
@@ -508,7 +523,6 @@ int alphaBeta(chess::Board& board, int depth, int alpha, int beta, int ply)
         return -MATE_SCORE + ply;
     }
 
-    uint64_t hash = board.hash();
     TTEntry* tt = probeTT(hash);
 
     if (tt->hash == hash && tt->depth >= depth)
@@ -536,6 +550,7 @@ int alphaBeta(chess::Board& board, int depth, int alpha, int beta, int ply)
 
     for (auto move : moves)
     {
+        repetitionTable[ply] = hash;
         board.makeMove(move);
 
         int score;
@@ -549,8 +564,9 @@ int alphaBeta(chess::Board& board, int depth, int alpha, int beta, int ply)
         {
             score = -alphaBeta(board, depth - 1, -alpha - 1, -alpha, ply + 1);
 
-            if (score > alpha && score < beta)
+            if (score > alpha && score < beta) {
                 score = -alphaBeta(board, depth - 1, -beta, -alpha, ply + 1);
+            }
         }
 
         board.unmakeMove(move);
