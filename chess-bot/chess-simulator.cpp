@@ -20,8 +20,7 @@ bool outOfTime() {
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - searchStart).count();
     return elapsed >= timeLimitMsGlobal;
 }
-
-
+//Hi
 enum NodeType { EXACT, LOWERBOUND, UPPERBOUND };
 
 struct TTEntry {
